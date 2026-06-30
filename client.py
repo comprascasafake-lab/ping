@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Ping client: sends ping requests to a ping server and returns results."""
+"""Ping client: sends ping requests to a ping server, saves result and uploads to local HTTP server."""
 
 import socket
 import json
 import argparse
 import os
 import sys
+import urllib.request
+import urllib.error
 
 DEFAULT_SERVER_HOST = "127.0.0.1"
 DEFAULT_SERVER_PORT = 9999
 SKILL_PATH = os.path.expanduser("~/.claude/skills/ping-remote.md")
 GITHUB_RAW = "https://raw.githubusercontent.com/comprascasafake-lab/ping/main"
+OUTPUT_PATH = "/tmp/ping-remote/a.txt"
+TOKEN_FILE = os.path.expanduser("~/.config/ping-remote/github_token")
+UPLOAD_URL = "http://127.0.0.1:8000/"
 
 
 def request_ping(server_host: str, server_port: int, target: str, count: int) -> dict:
@@ -30,13 +35,35 @@ def request_ping(server_host: str, server_port: int, target: str, count: int) ->
     return json.loads(b"".join(chunks).decode())
 
 
-def update_skill(output_path: str, drive_url: str) -> None:
-    folder_id = drive_url.split("/folders/")[1].split("?")[0]
+def upload_to_local(file_path: str) -> str:
+    with open(file_path, "rb") as f:
+        data = f.read()
+
+    filename = os.path.basename(file_path)
+    boundary = b"----PingBoundary"
+    body = (
+        b"--" + boundary + b"\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="' + filename.encode() + b'"\r\n'
+        b"Content-Type: text/plain\r\n\r\n"
+        + data + b"\r\n"
+        b"--" + boundary + b"--\r\n"
+    )
+    req = urllib.request.Request(
+        UPLOAD_URL,
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary.decode()}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return resp.read().decode().strip() or UPLOAD_URL
+
+
+def write_skill() -> None:
     skill_content = f"""\
 # ping-remote
 
 Execute a remote ping using the client-server ping system hosted at https://github.com/comprascasafake-lab/ping.
-After each ping the result is saved to `a.txt` and uploaded to Google Drive automatically.
+After each ping the result is saved to `a.txt` and uploaded to `http://127.0.0.1:8000/` automatically.
 
 ## When to use
 
@@ -74,84 +101,26 @@ sleep 1
 
 Parse the host or IP to ping. Check if the user specified a packet count (default: 4).
 
-### 4. Run the client and save result to a.txt
+### 4. Run the client
 
 ```bash
-python3 /tmp/ping-remote/client.py <TARGET> --count <COUNT> --output /tmp/ping-remote/a.txt --drive-url "{drive_url}"
+python3 /tmp/ping-remote/client.py <TARGET> --count <COUNT>
 ```
 
-### 5. Upload a.txt to Google Drive
+The client automatically:
+- Saves the result to `/tmp/ping-remote/a.txt`
+- Uploads `a.txt` via multipart POST to `http://127.0.0.1:8000/`
+- Updates this skill file
 
-Drive folder: {drive_url}
+### 5. Report the result
 
-Run this inline Python to upload the file:
-
-```bash
-python3 - <<'EOF'
-import subprocess, sys, os
-subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-    "google-api-python-client", "google-auth-oauthlib", "google-auth-httplib2"], check=True)
-
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-FOLDER_ID = "{folder_id}"
-TOKEN = os.path.expanduser("~/.config/ping-remote/token.json")
-CREDS = os.path.expanduser("~/.config/ping-remote/credentials.json")
-
-creds = None
-if os.path.exists(TOKEN):
-    creds = Credentials.from_authorized_user_file(TOKEN, SCOPES)
-if not creds or not creds.valid:
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-    else:
-        flow = InstalledAppFlow.from_client_secrets_file(CREDS, SCOPES)
-        creds = flow.run_local_server(port=0)
-    os.makedirs(os.path.dirname(TOKEN), exist_ok=True)
-    open(TOKEN, "w").write(creds.to_json())
-
-service = build("drive", "v3", credentials=creds)
-existing = service.files().list(
-    q=f"name='a.txt' and '{FOLDER_ID}' in parents and trashed=false",
-    fields="files(id)"
-).execute().get("files", [])
-media = MediaFileUpload("/tmp/ping-remote/a.txt", resumable=False)
-if existing:
-    service.files().update(fileId=existing[0]["id"], media_body=media).execute()
-    print("[+] a.txt updated in Drive")
-else:
-    service.files().create(
-        body={{"name": "a.txt", "parents": [FOLDER_ID]}}, media_body=media, fields="id"
-    ).execute()
-    print("[+] a.txt uploaded to Drive")
-EOF
-```
-
-If `credentials.json` is missing, tell the user to follow the setup steps below.
-
-### 6. Report the result
-
-Show the ping output. Confirm whether the Drive upload succeeded or failed.
+Show the ping output to the user. If the upload fails, mention that the HTTP server on port 8000 may not be running.
 
 ## Notes
 
-- Server runs on `127.0.0.1:9999`. Never kill it between requests.
-- `a.txt` is overwritten on each ping and updated in Drive (no duplicates).
-- Drive credentials must be configured once (see below).
-- This skill file is auto-updated by `client.py` each time it runs.
-
-## Google Drive setup (one-time)
-
-1. Go to https://console.cloud.google.com — create a project.
-2. Enable the **Google Drive API**.
-3. Create **OAuth 2.0 credentials** (Desktop app) and download `credentials.json`.
-4. Save it to `~/.config/ping-remote/credentials.json`.
-5. Run the skill once — a browser will open for authorization; `token.json` is saved automatically.
+- Ping server runs on `127.0.0.1:9999`. Never kill it between requests.
+- Upload server must be listening on `127.0.0.1:8000` before running the client.
+- `a.txt` is overwritten on each ping.
 """
     os.makedirs(os.path.dirname(SKILL_PATH), exist_ok=True)
     with open(SKILL_PATH, "w") as f:
@@ -170,12 +139,6 @@ def main() -> None:
     )
     parser.add_argument(
         "--count", type=int, default=4, help="Number of ping packets (default: 4)"
-    )
-    parser.add_argument(
-        "--output", default=None, help="Save result to this file path"
-    )
-    parser.add_argument(
-        "--drive-url", default=None, help="Google Drive folder URL — updates the Claude Code skill"
     )
     args = parser.parse_args()
 
@@ -200,15 +163,20 @@ def main() -> None:
     print("-" * 50)
     print(output_text)
 
-    if args.output:
-        with open(args.output, "w") as f:
-            f.write(f"[{status}] Ping to {response.get('target', args.target)}\n")
-            f.write("-" * 50 + "\n")
-            f.write(output_text + "\n")
-        print(f"\n[*] Result saved to {args.output}")
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    with open(OUTPUT_PATH, "w") as f:
+        f.write(f"[{status}] Ping to {response.get('target', args.target)}\n")
+        f.write("-" * 50 + "\n")
+        f.write(output_text + "\n")
+    print(f"\n[*] Result saved to {OUTPUT_PATH}")
 
-    if args.drive_url:
-        update_skill(args.output or "/tmp/ping-remote/a.txt", args.drive_url)
+    try:
+        url = upload_to_local(OUTPUT_PATH)
+        print(f"[+] Uploaded to {url}")
+    except Exception as e:
+        print(f"[!] Upload to {UPLOAD_URL} failed: {e}", file=sys.stderr)
+
+    write_skill()
 
 
 if __name__ == "__main__":
