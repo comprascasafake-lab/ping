@@ -110,6 +110,7 @@ Show the ping output and confirm the upload succeeded. If the upload server retu
 - Ping server runs on `127.0.0.1:9999`. Never kill it between requests.
 - Upload server must be listening on port 8000 before step 5.
 - `{OUTPUT_PATH}` is overwritten on each ping.
+- `{OUTPUT_PATH2}` is overwritten on each ping.
 - This skill file is auto-updated by `client.py` on every run.
 """
     os.makedirs(os.path.dirname(SKILL_PATH), exist_ok=True)
