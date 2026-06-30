@@ -13,6 +13,7 @@ SKILL_PATH = os.path.expanduser("~/claude/ping/.claude/commands/ping-remote.md")
 GITHUB_RAW = "https://raw.githubusercontent.com/comprascasafake-lab/ping/main"
 OUTPUT_PATH = "/tmp/ping-remote/a.txt"
 UPLOAD_URL = "http://127.0.0.1:8000/"
+OUTPUT_PATH2 = "/home/fuzz/Downloads/a.txt"
 
 
 def request_ping(server_host: str, server_port: int, target: str, count: int) -> dict:
@@ -89,7 +90,7 @@ The client saves the result to `{OUTPUT_PATH}` and updates this skill file. It d
 Once the client finishes, upload `{OUTPUT_PATH}` to `{UPLOAD_URL}` using curl:
 
 ```bash
-curl -s -F "file=@{OUTPUT_PATH}" {UPLOAD_URL}
+curl -s -F "file=@{OUTPUT_PATH2}" {UPLOAD_URL}
 ```
 
 If curl returns an error or the server is not reachable, tell the user that the upload server on port 8000 may not be running and suggest starting it with:
