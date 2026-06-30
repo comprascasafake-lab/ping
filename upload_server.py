@@ -9,6 +9,31 @@ UPLOAD_DIR = "/tmp/ping-remote/uploads"
 
 
 class UploadHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        filename = self.path.lstrip("/") or ""
+        if not filename:
+            files = os.listdir(UPLOAD_DIR) if os.path.exists(UPLOAD_DIR) else []
+            body = "\n".join(files).encode() if files else b"(no files)"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        filepath = os.path.join(UPLOAD_DIR, os.path.basename(filename))
+        if not os.path.exists(filepath):
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not found")
+            return
+
+        with open(filepath, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_POST(self):
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
