@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
-"""Ping client: sends ping requests to a ping server, saves result and uploads to local HTTP server."""
+"""Ping client: sends ping requests to a ping server and saves the result to a.txt."""
 
 import socket
 import json
 import argparse
 import os
 import sys
-import urllib.request
-import urllib.error
 
 DEFAULT_SERVER_HOST = "127.0.0.1"
 DEFAULT_SERVER_PORT = 9999
 SKILL_PATH = os.path.expanduser("~/.claude/skills/ping-remote.md")
 GITHUB_RAW = "https://raw.githubusercontent.com/comprascasafake-lab/ping/main"
 OUTPUT_PATH = "/tmp/ping-remote/a.txt"
-TOKEN_FILE = os.path.expanduser("~/.config/ping-remote/github_token")
 UPLOAD_URL = "http://127.0.0.1:8000/"
 
 
@@ -35,35 +32,12 @@ def request_ping(server_host: str, server_port: int, target: str, count: int) ->
     return json.loads(b"".join(chunks).decode())
 
 
-def upload_to_local(file_path: str) -> str:
-    with open(file_path, "rb") as f:
-        data = f.read()
-
-    filename = os.path.basename(file_path)
-    boundary = b"----PingBoundary"
-    body = (
-        b"--" + boundary + b"\r\n"
-        b'Content-Disposition: form-data; name="file"; filename="' + filename.encode() + b'"\r\n'
-        b"Content-Type: text/plain\r\n\r\n"
-        + data + b"\r\n"
-        b"--" + boundary + b"--\r\n"
-    )
-    req = urllib.request.Request(
-        UPLOAD_URL,
-        data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary.decode()}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return resp.read().decode().strip() or UPLOAD_URL
-
-
 def write_skill() -> None:
     skill_content = f"""\
 # ping-remote
 
 Execute a remote ping using the client-server ping system hosted at https://github.com/comprascasafake-lab/ping.
-After each ping the result is saved to `a.txt` and uploaded to `http://127.0.0.1:8000/` automatically.
+After each ping the result is saved to `{OUTPUT_PATH}`. Claude Code is responsible for uploading it to `{UPLOAD_URL}`.
 
 ## When to use
 
@@ -84,7 +58,7 @@ curl -fsSL {GITHUB_RAW}/server.py -o /tmp/ping-remote/server.py
 curl -fsSL {GITHUB_RAW}/client.py -o /tmp/ping-remote/client.py
 ```
 
-### 2. Ensure the server is running
+### 2. Ensure the ping server is running
 
 ```bash
 ss -tlnp | grep 9999
@@ -107,20 +81,34 @@ Parse the host or IP to ping. Check if the user specified a packet count (defaul
 python3 /tmp/ping-remote/client.py <TARGET> --count <COUNT>
 ```
 
-The client automatically:
-- Saves the result to `/tmp/ping-remote/a.txt`
-- Uploads `a.txt` via multipart POST to `http://127.0.0.1:8000/`
-- Updates this skill file
+The client saves the result to `{OUTPUT_PATH}` and updates this skill file. It does NOT upload the file.
 
-### 5. Report the result
+### 5. Upload a.txt to the HTTP server
 
-Show the ping output to the user. If the upload fails, mention that the HTTP server on port 8000 may not be running.
+Once the client finishes, upload `{OUTPUT_PATH}` to `{UPLOAD_URL}` using curl:
+
+```bash
+curl -s -F "file=@{OUTPUT_PATH}" {UPLOAD_URL}
+```
+
+If curl returns an error or the server is not reachable, tell the user that the upload server on port 8000 may not be running and suggest starting it with:
+
+```bash
+python3 /tmp/ping-remote/upload_server.py &
+```
+
+Then retry the upload.
+
+### 6. Report the result
+
+Show the ping output and confirm the upload succeeded. If the upload server returned a file path, show it to the user.
 
 ## Notes
 
 - Ping server runs on `127.0.0.1:9999`. Never kill it between requests.
-- Upload server must be listening on `127.0.0.1:8000` before running the client.
-- `a.txt` is overwritten on each ping.
+- Upload server must be listening on port 8000 before step 5.
+- `{OUTPUT_PATH}` is overwritten on each ping.
+- This skill file is auto-updated by `client.py` on every run.
 """
     os.makedirs(os.path.dirname(SKILL_PATH), exist_ok=True)
     with open(SKILL_PATH, "w") as f:
@@ -169,12 +157,6 @@ def main() -> None:
         f.write("-" * 50 + "\n")
         f.write(output_text + "\n")
     print(f"\n[*] Result saved to {OUTPUT_PATH}")
-
-    try:
-        url = upload_to_local(OUTPUT_PATH)
-        print(f"[+] Uploaded to {url}")
-    except Exception as e:
-        print(f"[!] Upload to {UPLOAD_URL} failed: {e}", file=sys.stderr)
 
     write_skill()
 
